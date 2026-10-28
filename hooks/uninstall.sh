@@ -9,7 +9,7 @@ HOOK_CMD="claude-office-hook"
 echo "Uninstalling hooks..."
 
 # Use the python script to remove settings
-uv run -p 3.14 "$HOOKS_DIR/manage_hooks.py" uninstall --hook-cmd "$HOOK_CMD"
+(cd "$HOME" && uv run --no-project -p 3.14 "$HOOKS_DIR/manage_hooks.py" uninstall --hook-cmd "$HOOK_CMD")
 
 # Remove the installed tool binary. uv tool uninstall takes the package name
 # (claude-office-hooks, plural) — the console-script command is the singular

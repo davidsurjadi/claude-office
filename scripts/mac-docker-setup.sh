@@ -4,8 +4,12 @@
 # Code tab (and the CLI) appear in the office at http://localhost:8050.
 #
 # Usage (from the repo root):
-#   ./scripts/mac-docker-setup.sh              # install / update and start
-#   ./scripts/mac-docker-setup.sh --uninstall  # remove hooks and stop the container
+#   ./scripts/mac-docker-setup.sh                           # install / update and start
+#   ./scripts/mac-docker-setup.sh --hooks-only              # hooks only, for a second macOS
+#                                                           # account whose container runs
+#                                                           # in another account
+#   ./scripts/mac-docker-setup.sh --uninstall               # remove hooks and stop the container
+#   ./scripts/mac-docker-setup.sh --uninstall --hooks-only  # remove hooks, leave the container
 #
 # Safe to re-run: every step is idempotent.
 set -euo pipefail
@@ -18,41 +22,58 @@ EVENTS_URL="$UI_URL/api/v1/events"
 
 step() { printf '\n==> %s\n' "$1"; }
 fail() { printf '\nError: %s\n' "$1" >&2; exit 1; }
+# Run from $HOME so uv ignores any .venv in the repo, which may belong to
+# another macOS account when the repo is shared (--hooks-only).
+manage_hooks() { (cd "$HOME" && uv run --no-project -p 3.14 "$REPO_DIR/hooks/manage_hooks.py" "$@"); }
+
+UNINSTALL=0
+HOOKS_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --uninstall) UNINSTALL=1 ;;
+        --hooks-only) HOOKS_ONLY=1 ;;
+        *) fail "unknown option '$arg'. Use --hooks-only and/or --uninstall." ;;
+    esac
+done
 
 [ "$(uname -s)" = "Darwin" ] || fail "this script is for macOS only."
 
 export PATH="$HOME/.local/bin:$PATH"
 
-if [ "${1:-}" = "--uninstall" ]; then
+if [ "$UNINSTALL" = "1" ]; then
     step "Removing Claude Office hooks from $SETTINGS_FILE"
     if command -v uv >/dev/null 2>&1; then
-        uv run -p 3.14 "$REPO_DIR/hooks/manage_hooks.py" uninstall --hook-cmd claude-office-hook
+        manage_hooks uninstall --hook-cmd claude-office-hook
     fi
-    step "Stopping the container"
-    (cd "$REPO_DIR" && docker compose down) || true
+    if [ "$HOOKS_ONLY" = "0" ]; then
+        step "Stopping the container"
+        (cd "$REPO_DIR" && docker compose down) || true
+    fi
     echo "Done. Quit and reopen the Claude desktop app to apply."
     exit 0
 fi
 
-step "Checking Docker"
-if ! command -v docker >/dev/null 2>&1; then
-    if command -v brew >/dev/null 2>&1; then
-        echo "Docker not found. Installing Docker Desktop with Homebrew..."
-        brew install --cask docker
-    else
-        fail "Docker Desktop is not installed. Get it from https://www.docker.com/products/docker-desktop/ then re-run."
+if [ "$HOOKS_ONLY" = "0" ]; then
+    step "Checking Docker"
+    if ! command -v docker >/dev/null 2>&1; then
+        if command -v brew >/dev/null 2>&1; then
+            echo "Docker not found. Installing Docker Desktop with Homebrew..."
+            brew install --cask docker
+        else
+            fail "Docker Desktop is not installed. Get it from https://www.docker.com/products/docker-desktop/ then re-run."
+        fi
     fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "Starting Docker Desktop..."
+        open -a Docker
+        for _ in $(seq 1 60); do
+            docker info >/dev/null 2>&1 && break
+            sleep 2
+        done
+        docker info >/dev/null 2>&1 || fail "Docker Desktop did not start. Open it once, accept its prompts, then re-run."
+    fi
+    echo "Docker is running."
 fi
-if ! docker info >/dev/null 2>&1; then
-    echo "Starting Docker Desktop..."
-    open -a Docker
-    for _ in $(seq 1 60); do
-        docker info >/dev/null 2>&1 && break
-        sleep 2
-    done
-    docker info >/dev/null 2>&1 || fail "Docker Desktop did not start. Open it once, accept its prompts, then re-run."
-fi
-echo "Docker is running."
 
 step "Checking uv (runs the hooks)"
 if ! command -v uv >/dev/null 2>&1; then
@@ -78,8 +99,8 @@ bash "$REPO_DIR/hooks/install.sh"
 HOOK_PATH="$(command -v claude-office-hook || true)"
 [ -n "$HOOK_PATH" ] || HOOK_PATH="$HOME/.local/bin/claude-office-hook"
 [ -x "$HOOK_PATH" ] || fail "claude-office-hook was not installed at $HOOK_PATH."
-uv run -p 3.14 "$REPO_DIR/hooks/manage_hooks.py" uninstall --hook-cmd "$HOOK_PATH" >/dev/null
-uv run -p 3.14 "$REPO_DIR/hooks/manage_hooks.py" install --hook-cmd "$HOOK_PATH" >/dev/null
+manage_hooks uninstall --hook-cmd "$HOOK_PATH" >/dev/null
+manage_hooks install --hook-cmd "$HOOK_PATH" >/dev/null
 echo "Hooks registered with absolute path: $HOOK_PATH"
 
 step "Pointing the hooks at the Docker port"
@@ -89,6 +110,31 @@ else
     printf 'CLAUDE_OFFICE_API_URL=%s\n' "$EVENTS_URL" >> "$CONFIG_FILE"
 fi
 echo "CLAUDE_OFFICE_API_URL=$EVENTS_URL"
+
+if [ "$HOOKS_ONLY" = "1" ]; then
+    # The container runs in another macOS account; port 8050 is reachable
+    # from every account on this Mac, so only its health is checked here.
+    step "Checking the office backend"
+    if curl -fsS "$UI_URL/health" >/dev/null 2>&1; then
+        echo "Backend is healthy."
+    else
+        echo "Warning: nothing answers at $UI_URL yet. Start the container from the"
+        echo "account that runs Docker; the hooks will connect once it is up."
+    fi
+    open "$UI_URL" 2>/dev/null || true
+    cat <<EOF
+
+Hooks installed for $(whoami). The office is at $UI_URL.
+
+Next:
+  1. Quit the Claude desktop app fully (Cmd+Q) and reopen it.
+  2. Start a LOCAL session in the Code tab and send any prompt.
+  3. Watch the boss appear in the browser tab.
+
+To remove these hooks: ./scripts/mac-docker-setup.sh --uninstall --hooks-only
+EOF
+    exit 0
+fi
 
 step "Building and starting the container (first build takes a few minutes)"
 (cd "$REPO_DIR" && docker compose up -d --build)
@@ -101,7 +147,7 @@ done
 curl -fsS "$UI_URL/health" >/dev/null 2>&1 || fail "backend not healthy. Check: docker compose logs claude-office"
 echo "Backend is healthy."
 
-open "$UI_URL"
+open "$UI_URL" 2>/dev/null || true
 
 cat <<EOF
 
@@ -113,5 +159,7 @@ Next:
   3. Watch the boss appear in the browser tab.
 
 The container restarts automatically whenever Docker Desktop is running.
+Another macOS account on this Mac can add its own sessions with:
+  ./scripts/mac-docker-setup.sh --hooks-only
 To remove everything: ./scripts/mac-docker-setup.sh --uninstall
 EOF
