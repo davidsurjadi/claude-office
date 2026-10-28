@@ -109,6 +109,20 @@ CLAUDE_OFFICE_DEBUG=1
 
 ## Starting the Visualizer
 
+### macOS with Docker (one command)
+
+For the Claude desktop app (Code tab, local sessions) or the CLI on a Mac, this
+installs Docker Desktop and uv if missing, registers the hooks with an absolute
+path (Dock-launched apps don't inherit your shell `PATH`), points them at the
+Docker port, and starts the container:
+
+```bash
+./scripts/mac-docker-setup.sh
+```
+
+Then quit and reopen the Claude desktop app and open [http://localhost:8050](http://localhost:8050).
+Remove everything with `./scripts/mac-docker-setup.sh --uninstall`.
+
 ### Recommended: Using tmux
 
 ```bash
