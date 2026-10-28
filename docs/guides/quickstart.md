@@ -123,6 +123,12 @@ Docker port, and starts the container:
 Then quit and reopen the Claude desktop app and open [http://localhost:8050](http://localhost:8050).
 Remove everything with `./scripts/mac-docker-setup.sh --uninstall`.
 
+If a second macOS account on the same Mac runs Claude, it can send its sessions
+to the same container without running Docker itself. From that account run
+`./scripts/mac-docker-setup.sh --hooks-only` (read access to the repo is
+enough). Remove its hooks with `./scripts/mac-docker-setup.sh --uninstall --hooks-only`,
+which leaves the container running.
+
 ### Recommended: Using tmux
 
 ```bash

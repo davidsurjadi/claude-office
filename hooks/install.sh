@@ -131,7 +131,8 @@ echo "Configuring Claude settings..."
 
 # Use the python script to manage settings safely
 # Pass the hook command name (not full path) for cross-platform compatibility
-uv run -p 3.14 "$HOOKS_DIR/manage_hooks.py" install --hook-cmd "$HOOK_CMD"
+# Run from $HOME so uv ignores any .venv in a repo owned by another account
+(cd "$HOME" && uv run --no-project -p 3.14 "$HOOKS_DIR/manage_hooks.py" install --hook-cmd "$HOOK_CMD")
 
 echo ""
 echo "Done! Please restart Claude Code to apply changes."
